@@ -1,0 +1,4 @@
+.env
+__pychace__/
+logs/
+db_backup/
