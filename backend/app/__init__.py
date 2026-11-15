@@ -16,6 +16,8 @@ from datetime import timedelta
 import requests
 from dateutil import parser
 import boto3
+import json
+
 
 load_dotenv()
 
@@ -25,15 +27,14 @@ SSM_PATH = "/grocerymate/prod/"
 
 # Welcher SSM-Parameter gehört in welche Umgebungsvariable?
 SSM_TO_ENV = {
-    "db_host": "POSTGRES_HOST",
-    "db_name": "POSTGRES_DB",
-    "db_user": "POSTGRES_USER",
-    "db_password": "POSTGRES_PASSWORD",
     "jwt_secret_key": "JWT_SECRET_KEY",
 }
 
+DB_SECRET_NAME = "grocerymate/prod/db-credentials"
+
 
 def load_ssm_config():
+    """Nicht geheime Einstellungen aus dem Parameter Store laden."""
     try:
         ssm_client = boto3.client("ssm", region_name="eu-central-1")
         response = ssm_client.get_parameters_by_path(
@@ -43,22 +44,31 @@ def load_ssm_config():
         )
 
         for param in response["Parameters"]:
-            key = param["Name"].split("/")[-1]      # "/grocerymate/prod/db_host" -> "db_host"
+            key = param["Name"].split("/")[-1]
             if key in SSM_TO_ENV:
                 os.environ[SSM_TO_ENV[key]] = param["Value"]
 
-        # Verbindungs-URL aus den einzelnen Teilen bauen
-        os.environ["POSTGRES_URI"] = (
-            f"postgresql://{os.environ['POSTGRES_USER']}:{quote_plus(os.environ['POSTGRES_PASSWORD'])}"
-            f"@{os.environ['POSTGRES_HOST']}:5432/{os.environ['POSTGRES_DB']}"
-        )
-        print("Konfiguration aus SSM Parameter Store geladen")
+        print("Einstellungen aus SSM Parameter Store geladen")
 
     except Exception as e:
-        print(f"SSM nicht erreichbar, nutze lokale .env ({type(e).__name__})")
+        print(f"SSM nicht erreichbar ({type(e).__name__})")
+
+
+def load_db_secret():
+    """Datenbank-Zugangsdaten aus dem Secrets Manager laden."""
+    secrets_client = boto3.client("secretsmanager", region_name="eu-central-1")
+    response = secrets_client.get_secret_value(SecretId=DB_SECRET_NAME)
+    creds = json.loads(response["SecretString"])
+
+    os.environ["POSTGRES_URI"] = (
+        f"postgresql://{creds['username']}:{quote_plus(creds['password'])}"
+        f"@{creds['host']}:{creds['port']}/{creds['dbname']}"
+    )
+    print("DB-Zugangsdaten aus Secrets Manager geladen")
 
 
 load_ssm_config()
+load_db_secret()
 
 db = SQLAlchemy()
 
